@@ -41,6 +41,12 @@ case $FW_CHOICE in
         MODE="iptables"
         # Для чистого iptables нам как раз нужны утилиты сохранения
         echo -e "${B_YELLOW}Настройка компонентов iptables...${NC}"
+        # Сообщаем системе, что установка будет неинтерактивной
+        export DEBIAN_FRONTEND=noninteractive
+
+        # Предустанавливаем ответы "Yes" (правда) для iptables-persistent
+        echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
+        echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
         apt-get update -qq && apt-get install -y curl iptables iptables-persistent -qq
         ;;
     *) echo "Неверный выбор. Выход."; exit 1 ;;
