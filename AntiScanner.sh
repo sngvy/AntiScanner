@@ -22,19 +22,29 @@ read -p "Ваш выбор [1-2]: " FW_CHOICE
 case $FW_CHOICE in
     1) 
         MODE="ufw"
+        # 1. Устанавливаем UFW, если его нет
         if ! command -v ufw >/dev/null; then
             echo -e "${B_YELLOW}Установка UFW...${NC}"
             apt-get update -qq && apt-get install -y ufw -qq
         fi
+        
+        # 2. Удаляем iptables-persistent, чтобы он не перезаписывал правила UFW
+        if dpkg -l | grep -q iptables-persistent; then
+            echo -e "${B_YELLOW}Удаление конфликтующего iptables-persistent...${NC}"
+            apt-get purge -y iptables-persistent -qq
+        fi
+        
+        # Устанавливаем только Curl
+        apt-get install -y curl -qq
         ;;
     2) 
-        MODE="iptables" 
+        MODE="iptables"
+        # Для чистого iptables нам как раз нужны утилиты сохранения
+        echo -e "${B_YELLOW}Настройка компонентов iptables...${NC}"
+        apt-get update -qq && apt-get install -y curl iptables iptables-persistent -qq
         ;;
     *) echo "Неверный выбор. Выход."; exit 1 ;;
 esac
-
-# Установка общих зависимостей
-apt-get update -qq && apt-get install -y curl iptables iptables-persistent -qq
 
 S="/usr/local/bin/update-antiscanner.sh"
 cat << EOF > "$S"
