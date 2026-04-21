@@ -72,7 +72,7 @@ if curl -sSL "\$URL" -o "\$TEMP_FILE" && [[ -s "\$TEMP_FILE" ]]; then
         sed -i '/AntiScanner-Block/d' /etc/ufw/user6.rules
         while IFS= read -r subnet; do
             [[ -z "\$subnet" || "\$subnet" == "#"* ]] && continue
-            ufw insert 1 deny from "\$subnet" comment 'AntiScanner-Block'
+            ufw deny from "$subnet" comment 'AntiScanner-Block'
         done < "\$TEMP_FILE"
         ufw reload
     else
