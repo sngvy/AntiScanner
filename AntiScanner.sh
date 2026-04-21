@@ -71,9 +71,19 @@ if curl -sSL "\$URL" -o "\$TEMP_FILE" && [[ -s "\$TEMP_FILE" ]]; then
         sed -i '/AntiScanner-Block/d' /etc/ufw/user.rules
         sed -i '/AntiScanner-Block/d' /etc/ufw/user6.rules
         while IFS= read -r subnet; do
-            [[ -z "\$subnet" || "\$subnet" == "#"* ]] && continue
-            ufw deny from "$subnet" comment 'AntiScanner-Block'
-        done < "\$TEMP_FILE"
+            # 1. Убираем лишние пробелы по краям
+            subnet=$(echo "$subnet" | xargs)
+            
+            # 2. Пропускаем пустые строки и комментарии
+            [[ -z "$subnet" || "$subnet" == "#"* ]] && continue
+            
+            # 3. Базовая проверка, что это похоже на IP (содержит точку или двоеточие)
+            if [[ "$subnet" =~ \. || "$subnet" =~ : ]]; then
+                ufw insert 1 deny from "$subnet" comment 'AntiScanner-Block'
+            else
+                echo "Пропуск: $subnet"
+            fi
+        done < "$TEMP_FILE"
         ufw reload
     else
         setup_iptables_chains
