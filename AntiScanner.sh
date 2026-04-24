@@ -33,9 +33,6 @@ case $FW_CHOICE in
             echo -e "${B_YELLOW}Удаление конфликтующего iptables-persistent...${NC}"
             apt-get purge -y iptables-persistent -qq
         fi
-        
-        # Устанавливаем только Curl
-        apt-get install -y curl -qq
         ;;
     2) 
         MODE="iptables"
