@@ -196,7 +196,7 @@ if curl -sSL --max-time 30 "$URL" -o "$TEMP_FILE" && [[ -s "$TEMP_FILE" ]]; then
             if [[ "$subnet" =~ : ]]; then
                 ufw deny from "$subnet" comment 'AntiScanner-Block'
             elif [[ "$subnet" =~ \. ]]; then
-                ufw insert 1 deny from "$subnet" comment 'AntiScanner-Block'
+                ufw prepend deny from "$subnet" comment 'AntiScanner-Block'
             else
                 echo "Пропуск: $subnet"
             fi
