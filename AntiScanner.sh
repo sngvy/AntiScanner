@@ -50,6 +50,102 @@ case $FW_CHOICE in
     *) echo "Неверный выбор. Выход."; exit 1 ;;
 esac
 
+# ============================================================
+# Защита от аномальных TCP-флагов (NULL/Xmas/SYN-FIN/SYN-RST сканы)
+# Статичные правила, не связаны с обновляемым блок-листом сканеров,
+# поэтому применяются один раз здесь, а не в update-antiscanner.sh
+# ============================================================
+
+setup_tcp_flags_protection_iptables() {
+    echo -e "${B_YELLOW}Установка защиты от аномальных TCP-флагов (iptables)...${NC}"
+    for cmd in iptables ip6tables; do
+        if ! $cmd -L TCP-FLAGS-PROTECT -n &>/dev/null; then
+            $cmd -N TCP-FLAGS-PROTECT
+        fi
+
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL NONE -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL NONE -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL ALL -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL ALL -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,RST SYN,RST -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp ! --syn -m conntrack --ctstate NEW -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp ! --syn -m conntrack --ctstate NEW -j DROP
+
+        # Подключаем цепочку к INPUT перед остальными правилами (в т.ч. перед SCANNERS-BLOCK)
+        if ! $cmd -C INPUT -p tcp -j TCP-FLAGS-PROTECT &>/dev/null; then
+            $cmd -I INPUT 1 -p tcp -j TCP-FLAGS-PROTECT
+        fi
+    done
+}
+
+setup_tcp_flags_protection_ufw() {
+    echo -e "${B_YELLOW}Установка защиты от аномальных TCP-флагов (UFW before.rules)...${NC}"
+    for RULES_FILE in /etc/ufw/before.rules /etc/ufw/before6.rules; do
+        [ -f "$RULES_FILE" ] || continue
+
+        # Не дублируем при повторном запуске скрипта
+        if grep -q "AntiScanner-TCP-Flags" "$RULES_FILE"; then
+            continue
+        fi
+
+        # Вставляем блок правил перед первой строкой COMMIT (конец секции *filter)
+        TMP_FILE=$(mktemp)
+        awk '
+            /^COMMIT/ && !inserted {
+                print "# --- AntiScanner-TCP-Flags: начало ---"
+                print "-A ufw-before-input -p tcp --tcp-flags ALL NONE -j DROP"
+                print "-A ufw-before-input -p tcp --tcp-flags ALL ALL -j DROP"
+                print "-A ufw-before-input -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP"
+                print "-A ufw-before-input -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP"
+                print "-A ufw-before-input -p tcp --tcp-flags SYN,RST SYN,RST -j DROP"
+                print "-A ufw-before-input -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP"
+                print "-A ufw-before-input -p tcp ! --syn -m conntrack --ctstate NEW -j DROP"
+                print "# --- AntiScanner-TCP-Flags: конец ---"
+                inserted=1
+            }
+            { print }
+        ' "$RULES_FILE" > "$TMP_FILE"
+
+        mv "$TMP_FILE" "$RULES_FILE"
+    done
+}
+
+if [ "$MODE" = "iptables" ]; then
+    setup_tcp_flags_protection_iptables
+    iptables-save > /etc/iptables/rules.v4
+    ip6tables-save > /etc/iptables/rules.v6
+
+    # Без этого сервиса rules.v4/rules.v6 не восстановятся после ребута —
+    # apt install не всегда сам включает автозагрузку сервиса
+    systemctl enable netfilter-persistent 2>/dev/null || systemctl enable iptables-persistent 2>/dev/null
+    systemctl restart netfilter-persistent 2>/dev/null
+
+    if systemctl is-enabled netfilter-persistent &>/dev/null; then
+        echo -e "${B_GREEN}netfilter-persistent включён — правила переживут перезагрузку.${NC}"
+    else
+        echo -e "${B_RED}ВНИМАНИЕ: не удалось включить netfilter-persistent. После ребута правила iptables могут слететь!${NC}"
+        echo -e "${B_YELLOW}Проверьте вручную: systemctl status netfilter-persistent${NC}"
+    fi
+else
+    setup_tcp_flags_protection_ufw
+
+    # before.rules применяется при каждом старте ufw — убеждаемся, что сам ufw в автозагрузке
+    systemctl enable ufw 2>/dev/null
+
+    if systemctl is-enabled ufw &>/dev/null; then
+        echo -e "${B_GREEN}UFW включён в автозагрузку — before.rules применится при ребуте.${NC}"
+    else
+        echo -e "${B_RED}ВНИМАНИЕ: ufw не в автозагрузке. Выполните: ufw enable${NC}"
+    fi
+fi
+
 apt-get install -y logrotate -qq
 
 # --- Ротация логов: храним только последние 7 дней, чтобы не раздувать диск ---
@@ -156,3 +252,4 @@ EOF
 fi
 
 echo -e "${B_GREEN}AntiScanner успешно настроен через $MODE!${NC}"
+echo -e "${B_GREEN}Защита от аномальных TCP-флагов активна (цепочка TCP-FLAGS-PROTECT / before.rules).${NC}"
