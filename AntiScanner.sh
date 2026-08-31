@@ -95,18 +95,25 @@ setup_tcp_flags_protection_ufw() {
             continue
         fi
 
+        # Имя цепочки в before6.rules отличается от before.rules (префикс ufw6-)
+        if [[ "$RULES_FILE" == *before6.rules ]]; then
+            CHAIN="ufw6-before-input"
+        else
+            CHAIN="ufw-before-input"
+        fi
+
         # Вставляем блок правил перед первой строкой COMMIT (конец секции *filter)
         TMP_FILE=$(mktemp)
-        awk '
+        awk -v chain="$CHAIN" '
             /^COMMIT/ && !inserted {
                 print "# --- AntiScanner-TCP-Flags: начало ---"
-                print "-A ufw-before-input -p tcp --tcp-flags ALL NONE -j DROP"
-                print "-A ufw-before-input -p tcp --tcp-flags ALL ALL -j DROP"
-                print "-A ufw-before-input -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP"
-                print "-A ufw-before-input -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP"
-                print "-A ufw-before-input -p tcp --tcp-flags SYN,RST SYN,RST -j DROP"
-                print "-A ufw-before-input -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP"
-                print "-A ufw-before-input -p tcp ! --syn -m conntrack --ctstate NEW -j DROP"
+                print "-A " chain " -p tcp --tcp-flags ALL NONE -j DROP"
+                print "-A " chain " -p tcp --tcp-flags ALL ALL -j DROP"
+                print "-A " chain " -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP"
+                print "-A " chain " -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP"
+                print "-A " chain " -p tcp --tcp-flags SYN,RST SYN,RST -j DROP"
+                print "-A " chain " -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP"
+                print "-A " chain " -p tcp ! --syn -m conntrack --ctstate NEW -j DROP"
                 print "# --- AntiScanner-TCP-Flags: конец ---"
                 inserted=1
             }
